@@ -13,13 +13,19 @@ import org.apache.hadoop.mapreduce.Reducer;
 import org.apache.hadoop.mapreduce.lib.input.FileSplit;
 import org.apache.hadoop.mapreduce.lib.input.TextInputFormat;
 import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
+import org.apache.hadoop.mapred.lib.MultipleTextOutputFormat;
+import org.apache.hadoop.mapreduce.lib.output.MultipleOutputs;
+import org.apache.hadoop.mapreduce.lib.output.TextOutputFormat;
 import org.apache.hadoop.util.GenericOptionsParser;
 import org.apache.hadoop.yarn.webapp.hamlet.Hamlet;
 
+import java.text.DateFormat;
+import java.text.ParseException;
 import java.util.*;
 import java.util.regex.*;
 import java.io.*;
 import java.nio.charset.Charset;
+import java.text.SimpleDateFormat;
 
 
 
@@ -72,8 +78,13 @@ public class ProductCount {
 
     public static class IntSumReducer
             extends Reducer<Text,Text,Text,Text> {
-        private Map<String, Integer> all_products = new HashMap<String, Integer>();
-        private Map<String, ArrayList<String>> products_by_ip = new HashMap<String, ArrayList<String>>();
+        private Map<String, Integer> products_by_browses = new HashMap<String, Integer>();
+        private Map<String, Integer> hours_by_browses = new HashMap<String, Integer>();
+        private MultipleOutputs mos;
+
+        public void setup(Context context) {
+            mos = new MultipleOutputs(context);
+        }
 
         private void increment_record(Map<String, Integer> a_map, ArrayList<String> a_record) {
             for (String product : a_record) {
@@ -84,33 +95,39 @@ public class ProductCount {
 
         protected void reduce(Text key, Iterable<Text> values, Context context)
                 throws java.io.IOException, InterruptedException {
-            for (Text value : values) {
+            for (Text value: values) {
                 String[] components = value.toString().split("\n")[0].split("_");
-                String ip = components[0];
-                String request = components[1];
-                String product_name = components[components.length-1];
-                if (request.equals("addtocart")) {
-                    if (!products_by_ip.containsKey(ip)) {
+                String rq = components[1];
+                String product_name = "";
+                String time = key.toString();
+
+                // most browsed products
+                if (components.length > 2) product_name = components[2];
+                if (rq.equals("browsing")) {
+                    if (!product_name.equals("")) {
                         ArrayList<String> a_array = new ArrayList<String>();
                         a_array.add(product_name);
-                        products_by_ip.put(ip, a_array);
-                    } else {
-                        products_by_ip.get(ip).add(product_name);
-                    }
-                } else if (request.equals("checkout")) {
-                    if (products_by_ip.containsKey(ip)) {
-                        increment_record(all_products, products_by_ip.get(ip));
-                        products_by_ip.put(ip, new ArrayList<String>());
+                        increment_record(products_by_browses, a_array);
                     }
                 }
-            }
-            context.write(new Text(all_products.keySet().toString()), new Text(Arrays.toString(all_products.values().toArray())));
-            for (String name : all_products.keySet()) {
-                context.write(new Text(name), new Text(all_products.get(name).toString()));
+
+                // busiest hours
+                String hr = time.split("/")[2].split(":")[1];
+                if (!hours_by_browses.containsKey(hr)) hours_by_browses.put(hr, 1);
+                else hours_by_browses.put(hr, hours_by_browses.get(hr)+1);
             }
         }
-    }
 
+        public void cleanup(Context context) throws IOException, InterruptedException {
+            for (String name: products_by_browses.keySet()) {
+                mos.write("browses", new Text(name), new Text(products_by_browses.get(name).toString()));
+            }
+            for (String hr: hours_by_browses.keySet()) {
+                mos.write("hours", new Text(hr), new Text(hours_by_browses.get(hr).toString()));
+            }
+            mos.close();
+        }
+    }
 
     public static void main(String[] args) throws Exception {
 
@@ -127,6 +144,10 @@ public class ProductCount {
         job.setJarByClass(ProductCount.class);
         job.setMapperClass(TokenizerMapper.class);
         job.setReducerClass(IntSumReducer.class);
+
+        MultipleOutputs.addNamedOutput(job, "browses", TextOutputFormat.class, LongWritable.class, Text.class);
+        MultipleOutputs.addNamedOutput(job, "hours", TextOutputFormat.class, LongWritable.class, Text.class);
+
         job.setOutputKeyClass(Text.class);
         job.setOutputValueClass(Text.class);
 
@@ -137,9 +158,5 @@ public class ProductCount {
         FileOutputFormat.setOutputPath(job,new Path(otherArgs[otherArgs.length - 1]));
 
         System.exit(job.waitForCompletion(true) ? 0 : 1);
-       /* ProductCount pc = new ProductCount();
-        //pc.print_content();
-        System.out.println(pc.best_selling())*/;
     }
 }
-
