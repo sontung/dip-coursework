@@ -7,3 +7,5 @@ SELECT * FROM time GROUP BY hr,count ORDER BY count DESC;
 
 top tep browsed product
 SELECT name,MAX(count) FROM br GROUP BY name,count ORDER BY count DESC LIMIT 10;
+
+select product_name, order_item_quantity  from order_items,products where product_id=order_item_product_id order by order_item_quantity desc LIMIT 10;
